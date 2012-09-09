@@ -1,43 +1,78 @@
+//
+// copyright @ 2012/09/08, All rights reserved.
+// writed by konghan
+//
 
-var msgrpc = require('msgpack-rpc');
+var fs  	= require('fs');
+var util	= require('util');
+var timer	= require('timers');
 
-var service = require(__dirname + '/service.js');
-//var logger  = require(__dirname + '/logger.js');
+var msgrpc  = require('msgpack-rpc');
 
-//logsvr = logger();
-//logsvr.run();
-//log = new logcli(process.id, '127.0.0.1', 5500);
-//log.setup();
-//log.log('first message');
+var svc 	= require('../src/service.js');
+
+var mainConfObject;
+// repo array
+var mainRepos = new Array();
 
 
-var repos   = new service(__dirname + 'repos.js');
-var session = new service(__dirname + 'session.js');
-
-repos.run();
-session.run();
-
-var mgodb = {host:'127.0.0.1', port:'27017', db:'gos'};
-var reprpc = {host:'127.0.0.1', port:'2012'};
-var ses = { host:'127.0.0.1',port:'2020'};
-
-var scli;
-
-var rcli = msgrpc.createServer(mgodb.port, mgodb.host, function(){
+function loadConfig(cf){
+	var conf = fs.readFileSync(cf);
 	
-	rcli.invoke('setupMngo', mgodb, function(err, rsp){
-		logger.log('setup mongodb : ', err);
-	});
+	var confObj = JSON.parse(conf);
 	
-	rcli.invoke('setupRepos', reprpc, function(err, rsp){
-		logger.log('setupRepos : ', err);
-		if(!err){
-			scli = msgrpc.createServer(ses.port, ses.host, function(){
-			scli.invoke('setupRep', reprpc, function(err, rsp){
-				logger.log('setup rep rcp : ',err);
+	console.log(util.inspect(confObj));
+	
+	return confObj;
+}
+
+function setupRepo(repo, cbFunc){
+//	var repo;
+//	for(repo in repos){
+		console.log('create repos service at:' + repo.host + ' ' + repo.port);
+		
+		var repsvc = svc.createService('../src/repos.js', repo.host, repo.port);
+		
+		timer.setTimeout(function(){
+		
+		var rpc = msgrpc.createClient(repo.port, repo.host, function(){
+			
+			console.log('repo management rpc connected');
+			
+			rpc.invoke('setupDbc', {host:repo.mdbhost, port:repo.mdbport, name:'Gos'}, function(err,rsp){
+				console.log('repos setupDbc return:', err);
+				if(!err){
+					rpc.invoke('setupRep', {host:repo.rephost, port:repo.repport},function(err,rsp){
+						console.log('repos setupRep return:', err);
+						if(!err){
+							mainRepos.push(repsvc);
+							cbFunc();
+						}
+					});
+				}
 			});
-			});
-		}
+		});
+		}, 1000);
+//	}
+}
+
+function setupSession(sessions, repo, cbFunc){
+	console.log('setupSession');
+	
+	cbFunc();
+}
+
+function main(){
+	mainConfObject = loadConfig(__dirname + '/../Gos.conf');
+	
+	console.log('-----------------------------');
+	
+	setupRepo(mainConfObject.repos, function(){
+		setupSession(mainConfObject.sessions, mainConfObject.repos, function(){
+			console.log('setup session ok');
+		});
 	});
-});
+}
+
+main();
 

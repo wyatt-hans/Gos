@@ -2,9 +2,11 @@
 // copyright @ 2012/08/18, All rights reserved.
 // writed by konghan
 //
-
+var util    = require('util');
 var msgrpc  = require('msgpack-rpc');
 var mongo   = require('mongodb');
+var mongosvr=mongo.Server;
+var mongodb =mongo.Db;
 
 //var logger = require('logger.js');
 var logger = console;
@@ -18,15 +20,15 @@ var logger = console;
  */
 var repStatus = 0; 
 
-/*
- * repos management rpc service
- */
-var repMgmtRpc;
-
 var REP_MGMT_RPC_PORTAL = {
 	'host' : '127.0.0.1',
 	'port' : '2010'
 };
+
+/*
+ * repos management rpc service
+ */
+var repMgmtRpc;
 
 /*
  * repos rpc service 
@@ -42,41 +44,62 @@ var repMngoGos;
 var repMngoCot = new Array();
 
 /*
- * rpc handler
+ * repos rpc service handler
+ * - authen : authenticat user
+ * -- {user.name, user.passwd}
+ * - addUser : add user to repos
+ * -- {user.name, user.xxx}
+ * - rmvUser : remove user from repos
+ * -- {user.name}
+ * - getUser : get user's information
+ * -- {user.name}
+ * - updateUser : update user's information
+ * -- {user.name, user.xxx}
+ * - logUer : add operating log message
+ * -- {user.name, user.xxx} 
  */
-
 var repRpcHandler = {
-	'getCred' : function(cred, rsp){
+	'authen' : function(cred, rsp){
+		logger.log('==rpc : authen');
 		if(repStatus != 2){
-			rsp.error({errstr : 'db not ready'});
+			rsp.error({code:-1, str : 'db not ready'});
 			return ;
 		}
 		
-		var col = repMngoCot['cred'];
+		var col = repMngoCot['userAuth'];
+		
+		logger.log('name:'+ cred.name+' passwd:'+cred.passwd);
 		
 		col.findOne({'name':cred.name}, function(err, cr) {
+			logger.log('find return:', err);
 			if(err){
-				rsp.error({errstr:'no user'});
+				rsp.error({code:-1, str:'no user'});
 				return;
 			}
+			logger.log('cred:', util.inspect(cr));
             
             // msgpack bugs, this will make it happy
-            delete cr._id;
-            rsp.result(cr);
+            // delete cr._id;
+            
+            if(cr.passwd == cred.passwd)
+	            rsp.result({str:'ok'});
+	        else
+	        	rsp.error({code:-1, str:'authen fail'});
         });
 	},
 	
 	'getUser' : function(user, rsp){
+		logger.log('==rpc : getUser');
 		if(repStatus != 2){
-			rsp.error({errstr : 'db not ready'});
+			rsp.error({code:-1, str : 'db not ready'});
 			return ;
 		}
 		
-		var col = repMngoCot['players'];
+		var col = repMngoCot['userInfo'];
 		
 		col.findOne({'uid':user.uid}, function(err, cr) {
 			if(err){
-				rsp.error({errstr:'no user'});
+				rsp.error({code:-1, str:'no user'});
 				return;
 			}
             
@@ -89,59 +112,88 @@ var repRpcHandler = {
 	'addUser' : function(user, rsp){
 	},
 	
-	'update' : function(user, rsp) {
+	'rmvUser' : function(user,rsp){
+	},
+	
+	'updateUser' : function(user, rsp) {
 	}
 };
 
 
 /*
- * management handler 
+ * management rpc service handler functions
+ * - setupDbc : setup mongodb connection
+ * -- {db.host,db.port,db.name}
+ * - closeDbc : close mongodb connection
+ * - setupRep : setup repos rpc service
+ * -- {rep.host,rep.port}
+ * - closeRep : close repos rpc service
+ * - getDbcStat : get mongodb connection status
+ * - getRepStat : get repos rpc service status
  */
 var repMgmtHandler = {
-	'setupMngo' : function(mngo, rsp){
-		if((mngo == void 0) || (mngo.host == void 0)
-			|| (mngo.port == void 0) || (mngo.db == void 0)){
-			rsp.error({errstr:'mongodb service config wrong'});
+	'setupDbc' : function(db, rsp){
+		logger.log('==rpc : setupDbc');
+		if((db == void 0) || (db.host == void 0)
+			|| (db.port == void 0) || (db.name == void 0)){
+			rsp.error({code: -1, str:'mongodb service config wrong'});
 			return ;
 		}
 		
 		if(repStatus != 0){
-			rsp.error({errstr:'mongodb haved started'});
+			rsp.error({code:-1, str:'mongodb haved started'});
 			return ;
 		}
 		
-		repMngoSvr = new mongo.Server(mngo.host, mngo.port,
+		repMngoSvr = new mongosvr(db.host, db.port,
 				{auto_reconnect:true});
-				
-		repMngoDb = new mongo(mngo.db, repMngoSvr);
 		
-		repMngoDb.open(function(err, db) {
+		logger.log('host:'+db.host + ' port:'+db.port+' name:'+db.name);
+		
+		repMngoDb = new mongodb(db.name, repMngoSvr);
+		
+		repMngoDb.open(function(err, mdb) {
 			if(err){
-				rsp.error({errstr : 'open db fail'});
+				rsp.error({code:-1, str : 'open db fail'});
 				return ;
 			}
 			
-			repMngoGos = db;
+			repMngoGos = mdb;
 			
-			repMngoCot['cred'] = db.createCollection('cred');
-			repMngoCot['players'] = db.createCollection('players');
+			 mdb.createCollection('userAuth',function(err, col) {
+				if(!err)
+					repMngoCot['userAuth'] = col;
+			});
+			
+			mdb.createCollection('userInfo',function(err, col) {
+				if(!err)
+					repMngoCot['userInfo'] = col;
+			});
+			
+			mdb.createCollection('userLog',function(err, col) {
+				if(!err)
+					repMngoCot['userLog'] = col;
+			});
 			
 			repStatus = 1; // db have connected 
 			
-			rsp.result();
+			logger.log('mongodb connected ');
+			rsp.result({str:'ok'});
 		});
 	},
 	
-	'setupRepos' : function(repos, rsp){
+	'setupRep' : function(repos, rsp){
+		logger.log('==rpc : setupRep');
 		if(repStatus != 1) {
-			rsp.error({errstr:'can\'t setup rpc service',
-					   errcode: repStatus});
+			logger.log('mongdb not connected');
+			rsp.error({code:-repStatus, str:'can\'t setup rpc service'});
 			return;
 		}
 		
 		if((repos == void 0) || (repos.host == void 0)
 			|| (repos.port == void 0)){
-			rsp.error({errstr:'without rpc service params'});
+			logger.log('rpc param wrong');
+			rsp.error({code:-1, str:'without rpc service params'});
 			return;
 		} 
 		
@@ -150,17 +202,27 @@ var repMgmtHandler = {
 		
 		repStatus = 2;  // service startup
 		
-		rpcRpc.listen(port, host);
-		
+		logger.log('rpc service setuped ');
+		rpcRpc.listen(repos.port, repos.host);
+		rsp.result({str:'ok'});
 	},
 	
-	'getMngoStat': function(){
+	'getDbcStat': function(){
+	},
+	
+	'getRepStat': function(){
 	},
 };
 
-function startup(mgmtHost, mgmtPort){
+/*
+ * setup repos server
+ * - setup management rpc service
+ */
+function setup(mgmtHost, mgmtPort){
 	var host;
 	var port;
+	
+	logger.log('repos start at:' + mgmtHost + ' ' + mgmtPort);
 	
 	rpcMgmtRpc = msgrpc.createServer();
 	rpcMgmtRpc.setHandler(repMgmtHandler);
@@ -178,7 +240,7 @@ function startup(mgmtHost, mgmtPort){
 	rpcMgmtRpc.listen(port, host);
 }
 
-startup();
+var host = process.argv[2];
+var port = process.argv[3];
 
-//exports.startup = startup;
-
+setup(host, port);

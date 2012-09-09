@@ -3,61 +3,45 @@
 // Writed by Konghan
 //
 
-var util   = require('util');
-var events = require('events');
 var fork   = require('child_process').fork;
+var logger = console;
 
-//
-// service(svcobj)
-//   svcobj = { exec: exec_file}
-//
-function service(svcobj) {
-    events.EventEmitter.call(this);
-    
-    this.exec = svcobj.exec;
-    this.svcd;
-    this.stat = 0; // 0:stop, 1:starting, 2:running
-};
+function service(){
+	this.svcd;
+	this.status = 0;
+}
 
-util.inherits(service, events.EventEmitter);
+function createService() {
+	var len = arguments.length;
+	var args = new Array();
 
-service.prototype.setup = function(svcobj){
-	if (this.stat != 0)
-	    return false;
-
-	this.exec = svcobj.exec;
-};
-
-service.prototype.run = function() {
-	if(this.stat != 0){
-		logger.log('service already running : ', this.exec);
-		return false;
+	if(len < 1){
+		logger.log('create service without exec');
+		return;
 	}
 	
-	logger.log('service run : ', this.exec);
-
-	this.stat = 1;
-	this.svcd = fork(this.exec);
-	this.emit('ready');
+	var exec = arguments[0];
 	
-	this.svcd.on('exit', function(code, signal){
-	    this.stat = 0;
-	    this.emit('exit');
-	});
+	for (var i = 1; i < len; i++)
+		args.push(arguments[i]);
 	
-	return true;
-};
+	
+	logger.log('service run : ' + exec + ' ' + args.join(' '));
+	
+	
+	var svc = new service();
+	
+	svc.svcd = fork(exec, args);
+	svc.status = 1;
+	
+	return svc;
+}
 
-service.prototype.stop = function() {
-	if(this.stat == 0)
-	    return true;
+function deleteService(svc){
+	if(svc.status != 0)
+		svc.svcd.kill('SIGHUP');
+}
 
-    this.svcd.kill('SIGHUP');
-};
-
-service.prototype.status = function() {
-	return this.stat;
-};
-
-module.exports = service;
+module.exports.createService = createService;
+module.exports.deleteService = deleteService;
 

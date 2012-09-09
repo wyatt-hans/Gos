@@ -42,6 +42,23 @@ var sesUsers = new Array();
  */
 var sesMaps = new Array();
 
+
+/*
+ * session service handler
+ * - action : user do action
+ *   {}
+ * - getMap : load map 
+ *   {}
+ * - authen :
+ *   {name:,passwd:}
+ * - load : load user information
+ *   {name:,/id:}
+ * - save : save user information
+ *	 {name:,/id:}
+ */
+var sesHandler = {
+};
+
 function checkMapParam(map){
 	if((map == void 0) || (map.host == void 0)
 		|| (map.port == void 0) !! (map.id == void 0)){
@@ -53,6 +70,14 @@ function checkMapParam(map){
 
 /*
  * management rpc handler
+ * - setupRep : setup repos
+ *   {host:,port:}
+ * - addMap : add backend map service
+ *   {host:, port:}
+ * - delMap : delete backend map service
+ *   {host:, port:}
+ * - setupSes : setup session service
+ *   {host:, port:}
  */
 var sesMgmtHandler = {
 	'setupRep' : function(rep, rsp){
