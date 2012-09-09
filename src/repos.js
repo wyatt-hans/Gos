@@ -97,7 +97,7 @@ var repRpcHandler = {
 		
 		var col = repMngoCot['userInfo'];
 		
-		col.findOne({'uid':user.uid}, function(err, cr) {
+		col.findOne({name:user.name}, function(err, cr) {
 			if(err){
 				rsp.error({code:-1, str:'no user'});
 				return;
@@ -200,10 +200,10 @@ var repMgmtHandler = {
 		rpcRpc = msgrpc.createServer();
 		rpcRpc.setHandler(repRpcHandler);
 		
-		repStatus = 2;  // service startup
-		
 		logger.log('rpc service setuped ');
 		rpcRpc.listen(repos.port, repos.host);
+		
+		repStatus = 2;  // service startup
 		rsp.result({str:'ok'});
 	},
 	

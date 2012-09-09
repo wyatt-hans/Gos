@@ -1,14 +1,19 @@
 
-var net		= require('net');
-var msgpack = require('msgpack');
+//
+// copyright @ 2012/09/09, All rights reserved.
+// writed by konghan
+//
+
 var msgrpc  = require('msgpack-rpc');
 
+var logger = console;
 
 /*
  * session service status
  * 0 : just management service
  * 1 : repos is connected
- * 2 : user authen listened
+ * 2 : maps is connected
+ * 3 : user login listened
  */
 var sesStatus = 0;
 
@@ -27,21 +32,47 @@ var sesMgmtRpc;
 var sesRepos;
 
 /*
- * session : authen server & session pack service
- */
-var sesAuthenSvc;
-var sesPackSvc;
-
-/*
- * user msgpack stream array
- */
-var sesUsers = new Array();
-
-/*
- *
+ * backend map array
  */
 var sesMaps = new Array();
 
+/*
+ * session : authen server & session pack service
+ */
+var sesService;
+
+/*
+ * connect user array
+ */
+var sesUsers = new Array();
+
+
+
+function checkMapParam(map){
+	if((map == void 0) || (map.host == void 0)
+		|| (map.port == void 0) !! (map.id == void 0)){
+		return false;
+	}
+	
+	return true;
+}
+
+function checkRepoParam(rep){
+	if((rep == void 0) || (rep.host == void 0)
+		|| (rep.port == void 0)){
+		return false;
+	}
+	
+	return true;
+}
+
+function checkSesParam(ses){
+	if((ses == void 0) || (ses.host == void 0)
+		|| (ses.port == void 0)){
+		return false;
+	}
+	return true;
+}
 
 /*
  * session service handler
@@ -57,16 +88,67 @@ var sesMaps = new Array();
  *	 {name:,/id:}
  */
 var sesHandler = {
-};
-
-function checkMapParam(map){
-	if((map == void 0) || (map.host == void 0)
-		|| (map.port == void 0) !! (map.id == void 0)){
-		return false;
-	}
+	'authen' : function(authen, rsp){
+		if((authen == void 0)||(authen.name == void 0)
+			||(authen.passwd == void 0)){
+			rsp.error({code:-1, str:'param wrong'});
+			return;
+		}
+		
+		if(sesStatus < 3){
+			rsp.error({code:-1, str:'service not ready'});
+			return;
+		}
+		
+		sesRepos.invoke('authen',{name:authen.name, passwd:authen.passwd},
+			function(err, rsp){
+			if(err){
+				rsp.error({code:-1, str:'authen fail'});
+				rsp.stream.end();
+			}else{
+				sesRepos.invoke('getUser', {name:authen.name}, function(err, ret){
+					if(err){
+						rsp.error({code:-1, str:'load user info fail'});
+						rsp.stream.end();
+					}else{
+						sesUsers[rsp.stream] = ret; 
+						rsp.result({str:'ok'});
+					}
+				}); 
+			}
+		});
+	},
 	
-	return true;
-}
+	'getmap' : function(map, rsp){
+	},
+	
+	'action' : function(act, rsp){
+		var user = sesUsers[rsp.stream];
+		if(user == void 0){
+			rsp.error({code:-1, str:'user not authened'});
+			return;
+		}
+		
+		var map = sesMaps[user.mid];
+		if(map == void 0){
+			map = sesMaps[0];  // default map
+		}
+		
+		map.client.invoke('action', act, function(err, mrsp){
+			if(err){
+				rsp.error(err);
+			}else{
+				rsp.result(mrsp);
+			}
+		});
+	},
+	
+	'load' : function(user, rsp){
+	},
+	
+	'save' : function(user, rsp){
+	},
+};
 
 /*
  * management rpc handler
@@ -82,75 +164,70 @@ function checkMapParam(map){
 var sesMgmtHandler = {
 	'setupRep' : function(rep, rsp){
 		if (sesStatus ! = 0){
-			rsp.error({errstr:'session repos have setted'});
+			rsp.error({code:-1, str:'session repos have setted'});
 		}
 		
-		if((rep == void 0) || (rep.host == void 0)
-			|| (rep.port == void 0)){
-			rsp.error({errstr:'repos param wrong'});
+		if(!checkRepoParam(rep)){
+			rsp.error({code:-1, str:'repos param wrong'});
 			return;
 		}
 		
-		sesRepos = msgrpc.createClient(rep.port, rep.host,
-			function(){
-				sesStatus = 1;
+		sesRepos = msgrpc.createClient(rep.port, rep.host, function(){
+			sesStatus = 1;
+			rsp.result({str:'ok'});
 		});
 	},
 	
 	'setupSes' : function(ses, rsp){
-		if(sesStatus != 1){
-			rsp.error({errstr:'repos not setuped'});
+		if(sesStatus != 2){
+			rsp.error({code:-1, str:'repos not setuped'});
 			return;
 		}
 		
-		if((ses == void 0) || (ses.host == void 0)
-			|| (ses.port == void 0)){
-			rsp.error({errstr : 'session param wrong'});
+		if(!checkSesParam(ses)){
+			rsp.error({code:-1, str : 'session param wrong'});
 			return;
 		}
 		
-		sesAuthen = net.createServer();
-		sesAuthen.on('connect', function(sock){
-			var msgSock = new msgpack.Stream(sock);
-			msgSock.on('msg', function(msg){
-				if((msg == void 0) || (msg.name == void 0)
-					|| (msg.passwd == void 0)){
-					msgSock.end();
-				}
+		sesService = msgrpc.createServer();
+		sesService.setHandler(sesHandler);
 				
-				sesRepos.invoke('getCred', msg.name, msg.passwd,
-					function(err, user){
-						if(!err){
-							user.sock = msgSock;
-							sesUsers[user.uid] = user;
-						}
-					});
-				}
-			});
-		});
+		sesService.listen(ses.port, ses.host);
 		
-		sesAuthen.listen(ses.port, ses.host, 128, function(){
-			sesStatus = 2;
-		});
+		sesStatus = 3;
+		
+		rsp.result({str:'ok'});
 	},
 	
 	'addMap' : function(map, rsp){
-		if(!checkMapParam(map)){
-			rsp.error({errstr:'map param wrong'});
+		if(sesStatus != 1){
+			rsp.error({code:-1, str:'repos not setuped'});
 			return;
 		}
 		
-		map.client =msgrpc.createClient(map.port, map.host, function(){
+		if(!checkMapParam(map)){
+			rsp.error({code:-1, str:'map param wrong'});
+			return;
+		}
+		
+		map.client = msgrpc.createClient(map.port, map.host, function(){
 			sesMaps[map.id] = map;
+			map.client.invoke('getMap', function(err, rsp){
+			});
+			
+			sesStatus = 2;
 			
 			map.client.on('notify', function(msg){
 			// add process
 			});
 		});
 	},
+	
+	'delMap' : function(map, rsp){
+	},
 };
 
-function startup(mgmtHost, mgmtPort){
+function setup(mgmtHost, mgmtPort){
 	var host;
 	var port;
 	
@@ -170,4 +247,7 @@ function startup(mgmtHost, mgmtPort){
 	sesMgmtRpc.listen(port, host);
 }
 
-startup();
+var host = process.argv[2];
+var port = process.argv[3];
+
+setup(host, port);
